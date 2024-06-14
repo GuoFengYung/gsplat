@@ -176,7 +176,26 @@ def bin_and_sort_gaussians(
         tile_bounds,
         block_size,
     )
+    # print("gaussian_ids:", gaussian_ids)
+    # print("gaussian_ids shape:", gaussian_ids.shape)
+    # print("isect_ids:", isect_ids[:100])
+    # print('isect_ids shpae', isect_ids.shape)
     isect_ids_sorted, sorted_indices = torch.sort(isect_ids)
+
+    # print("sorted_indices:", sorted_indices[:100])
+    # print("sorted_indices shape:", sorted_indices.shape)
+
     gaussian_ids_sorted = torch.gather(gaussian_ids, 0, sorted_indices)
+    # print("Before get_tile_bin_edges:")
+    # print("num_intersects:", num_intersects)
+    # print("isect_ids_sorted:", isect_ids_sorted)
+    # print("isect_ids_sorted shape:", isect_ids_sorted.shape)
+    # print("sorted_indices:", sorted_indices)
+    # print("sorted_indices shape:", sorted_indices.shape)
+    # print("gaussian_ids_sorted:", gaussian_ids_sorted)
+    # print("gaussian_ids_sorted shape:", gaussian_ids_sorted.shape)
     tile_bins = get_tile_bin_edges(num_intersects, isect_ids_sorted, tile_bounds)
+    # print("After get_tile_bin_edges:")
+    # print("tile_bins:", tile_bins)
+    # print("tile_bins shape:", tile_bins.shape)
     return isect_ids, gaussian_ids, isect_ids_sorted, gaussian_ids_sorted, tile_bins

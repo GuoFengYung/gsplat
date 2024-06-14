@@ -1,23 +1,24 @@
 from typing import Any
 import torch
-from .project_gaussians import project_gaussians
-from .rasterize import rasterize_gaussians
+from .project_gaussians import project_gaussians, project_gaussians_2d
+from .rasterize import rasterize_gaussians, rasterize_gaussians_2d
 from .utils import (
     map_gaussian_to_intersects,
     bin_and_sort_gaussians,
     compute_cumulative_intersects,
     compute_cov2d_bounds,
-    get_tile_bin_edges,
+    get_tile_bin_edges
 )
 from .sh import spherical_harmonics
 from .version import __version__
 import warnings
 
-
 __all__ = [
     "__version__",
     "project_gaussians",
+    "project_gaussians_2d",
     "rasterize_gaussians",
+    "rasterize_gaussians_2d",
     "spherical_harmonics",
     # utils
     "bin_and_sort_gaussians",
@@ -27,7 +28,9 @@ __all__ = [
     "map_gaussian_to_intersects",
     # Function.apply() will be deprecated
     "ProjectGaussians",
+    "ProjectGaussians_2d",
     "RasterizeGaussians",
+    "RasterizeGaussians_2d",
     "BinAndSortGaussians",
     "ComputeCumulativeIntersects",
     "ComputeCov2dBounds",
@@ -36,6 +39,7 @@ __all__ = [
     "SphericalHarmonics",
     "NDRasterizeGaussians",
 ]
+
 
 # Define these for backwards compatibility
 
@@ -124,6 +128,20 @@ class ProjectGaussians(torch.autograd.Function):
         raise NotImplementedError
 
 
+class ProjectGaussians_2d(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, *args, **kwargs):
+        warnings.warn(
+            "ProjectGaussians is deprecated, use project_gaussians instead",
+            DeprecationWarning,
+        )
+        return project_gaussians_2d(*args, **kwargs)
+    
+    @staticmethod
+    def backward(ctx: Any, *grad_outputs: Any) -> Any:
+        raise NotImplementedError
+
+
 class RasterizeGaussians(torch.autograd.Function):
     @staticmethod
     def forward(ctx, *args, **kwargs):
@@ -135,6 +153,20 @@ class RasterizeGaussians(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
+        raise NotImplementedError
+
+
+class RasterizeGaussians_2d(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, *args, **kwargs):
+        warnings.warn(
+            "RasterizeGaussians is deprecated, use rasterize_gaussians instead",
+            DeprecationWarning,
+        )
+        return rasterize_gaussians_2d(*args, **kwargs)
+
+    @staticmethod
+    def backward(ctx: Any, v_out_img, dL_depths, v_out_alpha) -> Any:
         raise NotImplementedError
 
 

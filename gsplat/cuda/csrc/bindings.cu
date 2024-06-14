@@ -160,20 +160,20 @@ std::tuple<
     torch::Tensor,
     torch::Tensor>
 project_gaussians_forward_tensor(
-    const int num_points,
-    torch::Tensor &means3d,
-    torch::Tensor &scales,
-    const float glob_scale,
-    torch::Tensor &quats,
-    torch::Tensor &viewmat,
-    const float fx,
-    const float fy,
-    const float cx,
-    const float cy,
-    const unsigned img_height,
-    const unsigned img_width,
-    const unsigned block_width,
-    const float clip_thresh
+    const int num_points,            // 高斯分佈的數量
+    torch::Tensor &means3d,          // 高斯分佈的 3D 均值張量
+    torch::Tensor &scales,           // 高斯分佈的尺度張量
+    const float glob_scale,          // 全局縮放比例
+    torch::Tensor &quats,            // 旋轉四元數張量
+    torch::Tensor &viewmat,          // 視圖矩陣張量
+    const float fx,                  // 焦距 x
+    const float fy,                  // 焦距 y
+    const float cx,                  // 中心 x
+    const float cy,                  // 中心 y
+    const unsigned img_height,       // 圖像高度
+    const unsigned img_width,        // 圖像寬度
+    const unsigned block_width,      // 磚塊寬度
+    const float clip_thresh          // 剪裁閾值
 ) {
     DEVICE_GUARD(means3d);
     dim3 img_size_dim3;
@@ -311,6 +311,152 @@ project_gaussians_backward_tensor(
     return std::make_tuple(v_cov2d, v_cov3d, v_mean3d, v_scale, v_quat);
 }
 
+std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor>
+project_gaussians_forward_tensor_2d(
+    const int num_points,            // 高斯分佈的數量
+    torch::Tensor &means3d,          // 高斯分佈的 3D 均值張量
+    torch::Tensor &scales,           // 高斯分佈的尺度張量
+    const float glob_scale,          // 全局縮放比例
+    torch::Tensor &quats,            // 旋轉四元數張量
+    torch::Tensor &opacities,  
+    torch::Tensor &viewmat,          // 視圖矩陣張量
+    torch::Tensor &projmat,          // 投影矩陣張量
+    const float fx,                  // 焦距 x
+    const float fy,                  // 焦距 y
+    const float cx,                  // 中心 x
+    const float cy,                  // 中心 y
+    const unsigned img_height,       // 圖像高度
+    const unsigned img_width,        // 圖像寬度
+    const unsigned block_width,      // 磚塊寬度
+    const float clip_thresh          // 剪裁閾值
+) {
+    DEVICE_GUARD(means3d);           // 設置設備防護
+
+    // 設置圖像尺寸
+    dim3 img_size_dim3;
+    img_size_dim3.x = img_width;
+    img_size_dim3.y = img_height;
+
+    // 設置磚塊邊界
+    dim3 tile_bounds_dim3;
+    tile_bounds_dim3.x = int((img_width + block_width - 1) / block_width);
+    tile_bounds_dim3.y = int((img_height + block_width - 1) / block_width);
+    tile_bounds_dim3.z = 1;
+
+    // 設置相機內部參數
+    float4 intrins = {fx, fy, cx, cy};
+
+    // 初始化輸出張量
+    torch::Tensor xys_d = torch::zeros({num_points, 2}, means3d.options().dtype(torch::kFloat32));
+    torch::Tensor depths_d = torch::zeros({num_points}, means3d.options().dtype(torch::kFloat32));
+    torch::Tensor transMats_d = torch::zeros({num_points, 3, 3}, means3d.options().dtype(torch::kFloat32));
+    torch::Tensor radii_d = torch::zeros({num_points}, means3d.options().dtype(torch::kInt32));
+    torch::Tensor num_tiles_hit_d = torch::zeros({num_points}, means3d.options().dtype(torch::kInt32));
+    torch::Tensor normal3d_d = torch::zeros({num_points, 4}, means3d.options().dtype(torch::kFloat32));
+    
+    // 啟動 CUDA 核心函數
+    project_gaussians_forward_kernel_2d<<<
+        (num_points + N_THREADS - 1) / N_THREADS,
+        N_THREADS>>>(
+        num_points,
+        (float3 *)means3d.contiguous().data_ptr<float>(),
+        (float3 *)scales.contiguous().data_ptr<float>(),
+        glob_scale,
+        (float4 *)quats.contiguous().data_ptr<float>(),
+        opacities.contiguous().data_ptr<float>(),
+        viewmat.contiguous().data_ptr<float>(),
+        projmat.contiguous().data_ptr<float>(),
+        intrins,
+        img_size_dim3,
+        tile_bounds_dim3,
+        block_width,
+        clip_thresh,
+        // 輸出參數
+        (float2 *)xys_d.contiguous().data_ptr<float>(),
+        depths_d.contiguous().data_ptr<float>(),
+        (float *)transMats_d.contiguous().data_ptr<float>(),
+        (float4 *)normal3d_d.contiguous().data_ptr<float>(),
+        radii_d.contiguous().data_ptr<int>(),
+        num_tiles_hit_d.contiguous().data_ptr<int32_t>()
+    );
+
+    // 返回輸出張量的元組
+    return std::make_tuple(
+        xys_d, depths_d, transMats_d, normal3d_d, radii_d, num_tiles_hit_d
+    );
+}
+
+// Interface function definition
+std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor>
+project_gaussians_backward_tensor_2d(
+    const int num_points,
+    torch::Tensor &means3d,
+    torch::Tensor &transMats,
+    torch::Tensor &scales,
+    const float glob_scale,
+    torch::Tensor &rotations,
+    torch::Tensor &viewmat,
+    torch::Tensor &projmat,
+    const unsigned img_height,
+    const unsigned img_width,
+    torch::Tensor &radii,
+    torch::Tensor &dL_dnormal3Ds
+) {
+    DEVICE_GUARD(means3d);
+
+    dim3 img_size_dim3;
+    img_size_dim3.x = img_width;
+    img_size_dim3.y = img_height;
+
+    torch::Tensor dL_dmean2Ds = torch::zeros({num_points, 3}, means3d.options().dtype(torch::kFloat32));
+    torch::Tensor dL_dmean3Ds = torch::zeros({num_points, 3}, means3d.options().dtype(torch::kFloat32));
+    torch::Tensor dL_dscales = torch::zeros({num_points, 2}, means3d.options().dtype(torch::kFloat32));
+    torch::Tensor dL_drots = torch::zeros({num_points, 4}, means3d.options().dtype(torch::kFloat32));
+    torch::Tensor dL_dtransMats = torch::zeros({num_points, 9}, means3d.options());
+
+    // Launch the CUDA kernel
+    project_gaussians_backward_kernel_2d<<<
+        (num_points + N_THREADS - 1) / N_THREADS,
+        N_THREADS>>>(
+        num_points,
+        (float3 *)means3d.contiguous().data_ptr<float>(),
+        transMats.contiguous().data_ptr<float>(),
+        (glm::vec3 *)scales.contiguous().data_ptr<float>(),
+        glob_scale,
+        (glm::vec4 *)rotations.contiguous().data_ptr<float>(),
+        viewmat.contiguous().data_ptr<float>(),
+        projmat.contiguous().data_ptr<float>(),
+        img_size_dim3,
+        radii.contiguous().data_ptr<int32_t>(),
+        dL_dnormal3Ds.contiguous().data_ptr<float>(),
+        (float *)dL_dtransMats.contiguous().data_ptr<float>(),
+        (float3 *)dL_dmean2Ds.contiguous().data_ptr<float>(),
+        (glm::vec3 *)dL_dmean3Ds.contiguous().data_ptr<float>(),
+        (glm::vec2 *)dL_dscales.contiguous().data_ptr<float>(),
+        (glm::vec4 *)dL_drots.contiguous().data_ptr<float>()
+    );
+
+    // Check for CUDA errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        throw std::runtime_error(std::string("CUDA kernel failed: ") + cudaGetErrorString(err));
+    }
+
+    return std::make_tuple(dL_dtransMats, dL_dmean2Ds, dL_dmean3Ds, dL_dscales, dL_drots);
+}
+
+
 std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
     const int num_points,
     const int num_intersects,
@@ -442,6 +588,73 @@ rasterize_forward_tensor(
     );
 
     return std::make_tuple(out_img, final_Ts, final_idx);
+}
+
+std::tuple<
+    torch::Tensor, 
+    torch::Tensor, 
+    torch::Tensor,
+    torch::Tensor>
+rasterize_forward_tensor_2d(
+    const std::tuple<int, int, int> tile_bounds,
+    const std::tuple<int, int, int> block,
+    const std::tuple<int, int, int> img_size,
+    const torch::Tensor &gaussian_ids_sorted,
+    const torch::Tensor &tile_bins,
+    const torch::Tensor &points_xy_image,
+    const torch::Tensor &transMats,
+    const torch::Tensor &colors,
+    const torch::Tensor &normal_opacity,
+    const torch::Tensor &background
+) {
+    // Check input tensors
+    CHECK_INPUT(gaussian_ids_sorted);
+    CHECK_INPUT(tile_bins);
+    CHECK_INPUT(points_xy_image);
+    CHECK_INPUT(transMats);
+    CHECK_INPUT(colors);
+    CHECK_INPUT(normal_opacity);
+    CHECK_INPUT(background);
+
+    // Convert tuple to dim3
+    dim3 tile_bounds_dim3(std::get<0>(tile_bounds), std::get<1>(tile_bounds), std::get<2>(tile_bounds));
+    dim3 block_dim3(std::get<0>(block), std::get<1>(block), std::get<2>(block));
+    dim3 img_size_dim3(std::get<0>(img_size), std::get<1>(img_size), std::get<2>(img_size));
+
+    const int channels = colors.size(1);
+    const int img_width = img_size_dim3.x;
+    const int img_height = img_size_dim3.y;
+
+    // Initialize output tensors
+    torch::Tensor out_img = torch::zeros({img_height, img_width, channels}, points_xy_image.options().dtype(torch::kFloat32));
+    torch::Tensor final_idx = torch::zeros({img_height, img_width, 2}, points_xy_image.options().dtype(torch::kInt32));
+    torch::Tensor final_T = torch::zeros({img_height, img_width, 3}, points_xy_image.options().dtype(torch::kFloat32));
+    auto float_opts = points_xy_image.options().dtype(torch::kFloat32);
+    torch::Tensor out_others = torch::full({3+3+1, img_height, img_width}, 0.0, float_opts);
+
+    // Launch CUDA kernel
+    rasterize_forward_2d<<<tile_bounds_dim3, block_dim3>>>(
+        tile_bounds_dim3,
+        img_size_dim3,
+        gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
+        (int2 *)tile_bins.contiguous().data_ptr<int>(),
+        (float2 *)points_xy_image.contiguous().data_ptr<float>(),
+        transMats.contiguous().data_ptr<float>(),
+        (float3 *)colors.contiguous().data_ptr<float>(),
+        (float4 *)normal_opacity.contiguous().data_ptr<float>(),
+        final_T.contiguous().data_ptr<float>(),
+        final_idx.contiguous().data_ptr<int>(),
+        (float3 *)out_img.contiguous().data_ptr<float>(),
+        out_others.contiguous().data_ptr<float>(),
+        *(float3 *)background.contiguous().data_ptr<float>()
+    );
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        throw std::runtime_error("CUDA kernel failed: " + std::string(cudaGetErrorString(err)));
+    }
+
+    return std::make_tuple(out_img, final_T, final_idx, out_others);
 }
 
 
@@ -681,4 +894,80 @@ std::
     );
 
     return std::make_tuple(v_xy, v_xy_abs, v_conic, v_colors, v_opacity);
+}
+
+
+std::tuple<
+    torch::Tensor, // dL_dtransMat
+    torch::Tensor, // dL_dmean2D
+    torch::Tensor, // dL_dopacity
+    torch::Tensor  // dL_rgb
+>
+rasterize_backward_tensor_2d(
+    const unsigned img_height,
+    const unsigned img_width,
+    const unsigned block_width,
+    const torch::Tensor &gaussians_ids_sorted,
+    const torch::Tensor &tile_bins,
+    const torch::Tensor &points_xy_image,
+    const torch::Tensor &normal_opacity,
+    const torch::Tensor &transMats,
+    const torch::Tensor &rgbs,
+    const torch::Tensor &background,
+    const torch::Tensor &final_Ts,
+    const torch::Tensor &final_idx,
+    const torch::Tensor &v_output,        // dL_dout_color
+    const torch::Tensor &v_output_alpha  // dL_dout_alpha
+) {
+    DEVICE_GUARD(points_xy_image);
+    CHECK_INPUT(points_xy_image);
+    CHECK_INPUT(rgbs);
+
+    if (points_xy_image.ndimension() != 2 || points_xy_image.size(1) != 2) {
+        AT_ERROR("points_xy_image must have dimensions (num_points, 2)");
+    }
+
+    // if (rgbs.ndimension() != 2 || rgbs.size(1) != 3) {
+    //     AT_ERROR("rgbs must have 2 dimensions");
+    // }
+
+    const int num_points = points_xy_image.size(0);
+    const dim3 tile_bounds = {
+        (img_width + block_width - 1) / block_width,
+        (img_height + block_width - 1) / block_width,
+        1
+    };
+    const dim3 block(block_width, block_width, 1);
+    const dim3 img_size = {img_width, img_height, 1};
+    const int channels = rgbs.size(1);
+
+    torch::Tensor dL_dtransMat = torch::zeros({num_points, 9}, points_xy_image.options());
+    torch::Tensor dL_dmean2D = torch::zeros({num_points, 2}, points_xy_image.options());
+    torch::Tensor dL_dopacity = torch::zeros({num_points, 4}, points_xy_image.options());
+    torch::Tensor v_rgb = torch::zeros({num_points, channels}, points_xy_image.options());
+
+    rasterize_backward_kernel_2d<<<tile_bounds, block>>>(
+        tile_bounds,
+        img_size,
+        gaussians_ids_sorted.contiguous().data_ptr<int>(),
+        (int2 *)tile_bins.contiguous().data_ptr<int>(),
+        (float2 *)points_xy_image.contiguous().data_ptr<float>(),
+        (float4 *)normal_opacity.contiguous().data_ptr<float>(),
+        transMats.contiguous().data_ptr<float>(),
+        (float3 *)rgbs.contiguous().data_ptr<float>(),
+        *(float3 *)background.contiguous().data_ptr<float>(),
+        final_Ts.contiguous().data_ptr<float>(),
+        final_idx.contiguous().data_ptr<int>(),
+        // grad input
+        (float3 *)v_output.contiguous().data_ptr<float>(),
+        // dL_depths.contiguous().data_ptr<float>(),
+        v_output_alpha.contiguous().data_ptr<float>(),
+        // grad output
+        dL_dtransMat.contiguous().data_ptr<float>(),
+        (float3 *)dL_dmean2D.contiguous().data_ptr<float>(),
+        dL_dopacity.contiguous().data_ptr<float>(),
+        (float3 *)v_rgb.contiguous().data_ptr<float>()
+    );
+
+    return std::make_tuple(dL_dtransMat, dL_dmean2D, dL_dopacity, v_rgb);
 }

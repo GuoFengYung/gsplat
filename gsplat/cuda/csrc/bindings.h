@@ -69,6 +69,32 @@ std::tuple<
     torch::Tensor,
     torch::Tensor,
     torch::Tensor,
+    torch::Tensor,
+    torch::Tensor>
+project_gaussians_forward_tensor_2d(
+    const int num_points,            // 高斯分佈的數量
+    torch::Tensor &means3d,          // 高斯分佈的 3D 均值張量
+    torch::Tensor &scales,           // 高斯分佈的尺度張量
+    const float glob_scale,          // 全局縮放比例
+    torch::Tensor &quats,            // 旋轉四元數張量
+    torch::Tensor &opacities,  
+    torch::Tensor &viewmat,          // 視圖矩陣張量
+    torch::Tensor &projmat,          // 投影矩陣張量
+    const float fx,                  // 焦距 x
+    const float fy,                  // 焦距 y
+    const float cx,                  // 中心 x
+    const float cy,                  // 中心 y
+    const unsigned img_height,       // 圖像高度
+    const unsigned img_width,        // 圖像寬度
+    const unsigned block_width,      // 磚塊寬度
+    const float clip_thresh          // 剪裁閾值
+);
+
+std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
     torch::Tensor>
 project_gaussians_backward_tensor(
     const int num_points,
@@ -93,6 +119,27 @@ project_gaussians_backward_tensor(
     torch::Tensor &v_compensation
 );
 
+
+std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor>
+project_gaussians_backward_tensor_2d(
+    const int num_points,
+    torch::Tensor &means3d,
+    torch::Tensor &transMats,
+    torch::Tensor &scales,
+    const float glob_scale,
+    torch::Tensor &rotations,
+    torch::Tensor &viewmat,
+    torch::Tensor &projmat,
+    const unsigned img_height,
+    const unsigned img_width,
+    torch::Tensor &radii,
+    torch::Tensor &dL_dnormal3Ds
+);
 
 std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
     const int num_points,
@@ -125,6 +172,24 @@ std::tuple<
     const torch::Tensor &conics,
     const torch::Tensor &colors,
     const torch::Tensor &opacities,
+    const torch::Tensor &background
+);
+
+std::tuple<
+    torch::Tensor, 
+    torch::Tensor, 
+    torch::Tensor, 
+    torch::Tensor>
+rasterize_forward_tensor_2d(
+    const std::tuple<int, int, int> tile_bounds,
+    const std::tuple<int, int, int> block,
+    const std::tuple<int, int, int> img_size,
+    const torch::Tensor &gaussian_ids_sorted,
+    const torch::Tensor &tile_bins,
+    const torch::Tensor &points_xy_image,
+    const torch::Tensor &transMats,
+    const torch::Tensor &colors,
+    const torch::Tensor &normal_opacity,
     const torch::Tensor &background
 );
 
@@ -194,4 +259,28 @@ std::
         const torch::Tensor &final_idx,
         const torch::Tensor &v_output, // dL_dout_color
         const torch::Tensor &v_output_alpha
+    );
+
+std::
+    tuple<
+        torch::Tensor, // dL_dtransMat
+        torch::Tensor, // dL_dmean2D
+        torch::Tensor, // dL_dopacity
+        torch::Tensor  // dL_rgb
+        >
+    rasterize_backward_tensor_2d(
+        const unsigned img_height,
+        const unsigned img_width,
+        const unsigned block_width,
+        const torch::Tensor &gaussians_ids_sorted,
+        const torch::Tensor &tile_bins,
+        const torch::Tensor &points_xy_image,
+        const torch::Tensor &normal_opacity,
+        const torch::Tensor &transMats,
+        const torch::Tensor &rgbs,
+        const torch::Tensor &background,
+        const torch::Tensor &final_Ts,
+        const torch::Tensor &final_idx,
+        const torch::Tensor &v_output,        // dL_dout_color
+        const torch::Tensor &v_output_alpha  // dL_dout_alpha
     );

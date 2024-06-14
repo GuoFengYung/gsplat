@@ -4,6 +4,43 @@
 #include "third_party/glm/glm/gtc/type_ptr.hpp"
 #include <iostream>
 
+#define BLOCK_X 16
+#define BLOCK_Y 16
+#define BLOCK_SIZE (BLOCK_X * BLOCK_Y)
+#define RENDER_AXUTILITY 1
+#define DEPTH_OFFSET 0
+#define ALPHA_OFFSET 1
+#define NORMAL_OFFSET 2 
+#define MIDDEPTH_OFFSET 5
+#define DISTORTION_OFFSET 6
+
+__device__ const float near_n = 0.2;
+__device__ const float far_n = 100.0;
+__device__ const float FilterInvSquare = 2.0f;
+
+__forceinline__ __device__ float4 transformPoint4x4(const float3& p, const float* matrix)
+{
+	float4 transformed = {
+		matrix[0] * p.x + matrix[4] * p.y + matrix[8] * p.z + matrix[12],
+		matrix[1] * p.x + matrix[5] * p.y + matrix[9] * p.z + matrix[13],
+		matrix[2] * p.x + matrix[6] * p.y + matrix[10] * p.z + matrix[14],
+		matrix[3] * p.x + matrix[7] * p.y + matrix[11] * p.z + matrix[15]
+	};
+	return transformed;
+}
+
+__forceinline__ __device__ float3 cross(float3 a, float3 b){return make_float3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);}
+
+__forceinline__ __device__ float3 transformPoint4x3(const float3& p, const float* matrix)
+{
+	float3 transformed = {
+		matrix[0] * p.x + matrix[4] * p.y + matrix[8] * p.z + matrix[12],
+		matrix[1] * p.x + matrix[5] * p.y + matrix[9] * p.z + matrix[13],
+		matrix[2] * p.x + matrix[6] * p.y + matrix[10] * p.z + matrix[14],
+	};
+	return transformed;
+}
+
 inline __device__ void get_bbox(
     const float2 center,
     const float2 dims,
@@ -103,6 +140,17 @@ inline __device__ float3 transform_4x3_rot_only_transposed(const float *mat, con
     return out;
 }
 
+// helper for applying R^T * p for a ROW MAJOR 4x3 matrix [R, t], ignoring t
+inline __device__ float3 transformVec4x3Transpose(const float *mat, const float3 p) {
+    float3 out = {
+        mat[0] * p.x + mat[1] * p.y + mat[2] * p.z,
+        mat[4] * p.x + mat[5] * p.y + mat[6] * p.z,
+        mat[8] * p.x + mat[9] * p.y + mat[10] * p.z,
+    };
+    return out;
+}
+
+
 // helper for applying R * p + T, expect mat to be ROW MAJOR
 inline __device__ float3 transform_4x3(const float *mat, const float3 p) {
     float3 out = {
@@ -167,6 +215,31 @@ inline __device__ glm::mat3 quat_to_rotmat(const float4 quat) {
     );
 }
 
+// adopt from gsplat: https://github.com/nerfstudio-project/gsplat/blob/main/gsplat/cuda/csrc/forward.cu
+inline __device__ glm::mat3 quat_to_rotmat_2d(const glm::vec4 quat) {
+	// quat to rotation matrix
+	float s = rsqrtf(
+		quat.w * quat.w + quat.x * quat.x + quat.y * quat.y + quat.z * quat.z
+	);
+	float w = quat.x * s;
+	float x = quat.y * s;
+	float y = quat.z * s;
+	float z = quat.w * s;
+
+	// glm matrices are column-major
+	return glm::mat3(
+		1.f - 2.f * (y * y + z * z),
+		2.f * (x * y + w * z),
+		2.f * (x * z - w * y),
+		2.f * (x * y - w * z),
+		1.f - 2.f * (x * x + z * z),
+		2.f * (y * z + w * x),
+		2.f * (x * z + w * y),
+		2.f * (y * z - w * x),
+		1.f - 2.f * (x * x + y * y)
+	);
+}
+
 inline __device__ float4
 quat_to_rotmat_vjp(const float4 quat, const glm::mat3 v_R) {
     float w = quat.x;
@@ -210,6 +283,52 @@ quat_to_rotmat_vjp(const float4 quat, const glm::mat3 v_R) {
     return v_quat;
 }
 
+inline __device__ glm::vec4
+quat_to_rotmat_vjp_2d(const glm::vec4 quat, const glm::mat3 v_R) {
+	float s = rsqrtf(
+		quat.w * quat.w + quat.x * quat.x + quat.y * quat.y + quat.z * quat.z
+	);
+	float w = quat.x * s;
+	float x = quat.y * s;
+	float y = quat.z * s;
+	float z = quat.w * s;
+
+	glm::vec4 v_quat;
+	// v_R is COLUMN MAJOR
+	// w element stored in x field
+	v_quat.x =
+		2.f * (
+				  // v_quat.w = 2.f * (
+				  x * (v_R[1][2] - v_R[2][1]) + y * (v_R[2][0] - v_R[0][2]) +
+				  z * (v_R[0][1] - v_R[1][0])
+			  );
+	// x element in y field
+	v_quat.y =
+		2.f *
+		(
+			// v_quat.x = 2.f * (
+			-2.f * x * (v_R[1][1] + v_R[2][2]) + y * (v_R[0][1] + v_R[1][0]) +
+			z * (v_R[0][2] + v_R[2][0]) + w * (v_R[1][2] - v_R[2][1])
+		);
+	// y element in z field
+	v_quat.z =
+		2.f *
+		(
+			// v_quat.y = 2.f * (
+			x * (v_R[0][1] + v_R[1][0]) - 2.f * y * (v_R[0][0] + v_R[2][2]) +
+			z * (v_R[1][2] + v_R[2][1]) + w * (v_R[2][0] - v_R[0][2])
+		);
+	// z element in w field
+	v_quat.w =
+		2.f *
+		(
+			// v_quat.z = 2.f * (
+			x * (v_R[0][2] + v_R[2][0]) + y * (v_R[1][2] + v_R[2][1]) -
+			2.f * z * (v_R[0][0] + v_R[1][1]) + w * (v_R[0][1] - v_R[1][0])
+		);
+	return v_quat;
+}
+
 inline __device__ glm::mat3
 scale_to_mat(const float3 scale, const float glob_scale) {
     glm::mat3 S = glm::mat3(1.f);
@@ -217,6 +336,15 @@ scale_to_mat(const float3 scale, const float glob_scale) {
     S[1][1] = glob_scale * scale.y;
     S[2][2] = glob_scale * scale.z;
     return S;
+}
+
+inline __device__ glm::mat3
+scale_to_mat_2d(const glm::vec3 scale, const float glob_scale) {
+	glm::mat3 S = glm::mat3(1.f);
+	S[0][0] = glob_scale * scale.x;
+	S[1][1] = glob_scale * scale.y;
+	S[2][2] = glob_scale * scale.z;
+	return S;
 }
 
 // device helper for culling near points
@@ -228,4 +356,56 @@ inline __device__ bool clip_near_plane(
         return true;
     }
     return false;
+}
+
+inline __device__ float3 operator*(const float3& a, const float3& b) {
+    return make_float3(a.x * b.x, a.y * b.y, a.z * b.z);
+}
+
+inline __device__ float3 operator*(float a, const float3& b) {
+    return make_float3(a * b.x, a * b.y, a * b.z);
+}
+
+inline __device__ float3 operator*(const float3& a, float b) {
+    return make_float3(a.x * b, a.y * b, a.z * b);
+}
+
+inline __device__ float2 operator*(const float2& a, const float2& b) {
+    return make_float2(a.x * b.x, a.y * b.y);
+}
+
+inline __device__ float3 operator+(const float3& a, const float3& b) {
+    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+inline __device__ float3 operator-(const float3& a, const float3& b) {
+    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+inline __device__ float2 operator-(const float2& a, const float2& b) {
+    return make_float2(a.x - b.x, a.y - b.y);
+}
+
+inline __device__ float sumf3(const float3& a) {
+    return a.x + a.y + a.z;
+}
+
+inline __device__ float2 sqrtf2(const float2& a) {
+    return make_float2(sqrtf(a.x), sqrtf(a.y));
+}
+
+inline __device__ float2 maxf2(float val, const float2& a) {
+    return make_float2(fmaxf(val, a.x), fmaxf(val, a.y));
+}
+
+inline __device__ void getRect(const float2 p, int max_radius, uint2& rect_min, uint2& rect_max, dim3 grid)
+{
+	rect_min = {
+		min(grid.x, max((int)0, (int)((p.x - max_radius) / BLOCK_X))),
+		min(grid.y, max((int)0, (int)((p.y - max_radius) / BLOCK_Y)))
+	};
+	rect_max = {
+		min(grid.x, max((int)0, (int)((p.x + max_radius + BLOCK_X - 1) / BLOCK_X))),
+		min(grid.y, max((int)0, (int)((p.y + max_radius + BLOCK_Y - 1) / BLOCK_Y)))
+	};
 }

@@ -10,16 +10,21 @@ from .cuda._wrapper import (
     rasterize_to_indices_in_range,
     rasterize_to_pixels,
     raytracing_to_pixels,
+    integrate_to_points,
     view_to_gaussians,
     compute_3D_smoothing_filter,
     spherical_harmonics,
     world_to_cam,
+    project_points,
 )
 from .rendering import (
     rasterization,
     rasterization_inria_wrapper,
     rasterization_legacy_wrapper,
 )
+
+# from src.lib.render.rendering import integration, raytracing
+
 from .strategy import DefaultStrategy, MCMCStrategy, Strategy
 from .version import __version__
 
@@ -111,11 +116,13 @@ all = [
     "spherical_harmonics",
     "isect_offset_encode",
     "isect_tiles",
+    "points_isect_tiles",
     "persp_proj",
     "fully_fused_projection",
     "quat_scale_to_covar_preci",
     "raytracing_to_pixels",
     "view_to_gaussian",
+    "integrate_to_points",
     "rasterize_to_pixels",
     "world_to_cam",
     "accumulate",
@@ -130,4 +137,5 @@ all = [
     "compute_cumulative_intersects",
     "compute_cov2d_bounds",
     "get_tile_bin_edges",
+    project_points
 ]

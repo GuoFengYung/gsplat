@@ -267,7 +267,7 @@ project_points_fwd_tensor(
     const uint32_t image_width, const uint32_t image_height,
     const float near_plane, const float far_plane);
 
-std::tuple<torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 integrate_to_points_fwd_tensor(
     // Point parameters
     const torch::Tensor &points2d,                   // [C, N, 2]

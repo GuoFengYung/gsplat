@@ -958,7 +958,7 @@ def integrate_to_points(
         backgrounds: Optional[Tensor] = None,  # [C, channels]
         packed: bool = False,
         absgrad: bool = False,
-) -> Tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
     Args:
@@ -980,6 +980,7 @@ def integrate_to_points(
 
         - **Rendered colors**. [C, image_height, image_width, channels]
         - **Rendered alphas**. [C, image_height, image_width, 1]
+        - **Rendered out_color_integrated**. [C, P, 3]
     """
     assert not packed, "integrate_to_points only supports non-packed mode."
 
@@ -1015,7 +1016,7 @@ def integrate_to_points(
             tile_width * tile_size >= image_width
     ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
 
-    render_colors, render_alphas = _make_lazy_cuda_func(
+    render_colors, render_alphas, out_color_integrated = _make_lazy_cuda_func(
         "integrate_to_points_fwd"
     )(
         points2d,
@@ -1036,7 +1037,7 @@ def integrate_to_points(
         point_flatten_ids,
     )
 
-    return render_colors, render_alphas
+    return render_colors, render_alphas, out_color_integrated
 
 
 class _QuatScaleToCovarPreci(torch.autograd.Function):

@@ -51,7 +51,7 @@ __global__ void integrate_to_points_fwd_kernel(
     render_colors += camera_id * image_height * image_width * (COLOR_DIM + 1 + 3);
     render_alphas += camera_id * image_height * image_width;
     out_integrated_alphas += camera_id * PN;
-    out_color_integrated += camera_id * PN * (COLOR_DIM + 1 + 3);
+    out_color_integrated += camera_id * PN * COLOR_DIM;
     last_ids += camera_id * image_height * image_width * 2;
     Ks += camera_id * 9;
     
@@ -451,9 +451,9 @@ __global__ void integrate_to_points_fwd_kernel(
         if (inside){
             for (int k = 0; k < num_projected; k++){
 				out_integrated_alphas[projected_ids[k]] = point_alphas[k];
-				// // write colors
-// 				for (int ch = 0; ch < 3; ch++)
-// 					out_color_integrated[3 * projected_ids[k] + ch] = pix_out[ch] + corner_Ts[0] * backgrounds[ch];
+// 				// // write colors
+				for (int ch = 0; ch < COLOR_DIM; ch++)
+					out_color_integrated[COLOR_DIM * projected_ids[k] + ch] = pix_out[ch] + corner_Ts[0] ;;
 			}
         }
 
@@ -522,11 +522,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
 
     torch::Tensor out_integrated_alphas = torch::full({C, PN}, 1.0,
                                         means2d.options().dtype(torch::kFloat32));
-    torch::Tensor out_color_integrated = torch::full({C, PN, 3}, 0.0,
+    torch::Tensor out_color_integrated = torch::full({C, PN, channels}, 1.0,
                                         means2d.options().dtype(torch::kFloat32));
 
-    printf("out_integrated_alphas size: %d %d\n", out_integrated_alphas.size(0), out_integrated_alphas.size(1));
-    printf("out_color_integrated size: %d %d\n", out_color_integrated.size(0), out_color_integrated.size(1));
+//     printf("out_integrated_alphas size: %d %d\n", out_integrated_alphas.size(0), out_integrated_alphas.size(1));
+//     printf("out_color_integrated size: %d %d\n", out_color_integrated.size(0), out_color_integrated.size(1));
 
     // 1 for last_ids and 1 for max_contributor 
     torch::Tensor last_ids = torch::empty({C, image_height, image_width, 2},
@@ -562,7 +562,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
             point_tile_offsets.data_ptr<int32_t>(), point_flatten_ids.data_ptr<int32_t>(),
             renders.data_ptr<float>(), alphas.data_ptr<float>(),
             out_integrated_alphas.data_ptr<float>(),
-            out_color_integrated.contiguous().data<float>(),
+            out_color_integrated.data_ptr<float>(),
             last_ids.data_ptr<int32_t>());
 
     return std::make_tuple(renders, out_integrated_alphas, out_color_integrated);
